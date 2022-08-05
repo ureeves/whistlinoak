@@ -6,6 +6,11 @@
 
 Annotated even-arity trees backed by mmaps.
 
+## Usage
+```toml
+whistlinoak = "0.1"
+```
+
 ## Example
 ```rust 
 use tempfile::NamedTempFile;
