@@ -273,8 +273,9 @@ where
         let len = header_size() + tree_size::<L, A, N>(header.levels - 1);
         let len = len as u64;
 
-        self.mmap = MmapMut::map_anon(0)?;
-        self.file.set_len(len)?;
+        if !cfg!(windows) {
+            self.file.set_len(len)?;
+        }
 
         let (_, header) = self.mut_tree_buf_and_header();
 
