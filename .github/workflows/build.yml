@@ -80,10 +80,7 @@ jobs:
           toolchain: nightly
           override: true
       - name: Run `cargo bench`
-        uses: actions-rs/cargo@v1
-        with:
-          command: bench
-          args: --features=test -- | tee output.txt
+        run: cargo bench --features=test | tee output.txt
       - name: Download previous benchmark data
         uses: actions/cache@v1
         with:
