@@ -6,7 +6,7 @@ keywords = ["tree", "mmap", "annotation", "data", "structure"]
 
 repository = "https://github.com/ureeves/whistlinoak"
 authors = ["Eduardo Leegwater Simões <eduardols@protonmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 
 edition = "2021"
 license = "MIT OR Apache-2.0"
