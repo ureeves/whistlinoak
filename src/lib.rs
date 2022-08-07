@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 #![deny(clippy::all)]
+#![cfg_attr(feature = "test", feature(test))]
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind};
@@ -596,4 +597,39 @@ mod tests {
     }
 
     tests!(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+
+    #[cfg(feature = "test")]
+    mod benches {
+        extern crate test;
+
+        use crate::tests::Cardinality;
+
+        use crate::Tree;
+        use tempfile::NamedTempFile;
+        use test::{black_box, Bencher};
+
+        #[bench]
+        fn bench_insert(b: &mut Bencher) {
+            let file =
+                NamedTempFile::new().expect("there should be a tmp file");
+            let path = file.into_temp_path();
+
+            let mut tree = Tree::<usize>::new(path)
+                .expect("should open the tree successfully");
+
+            b.iter(|| tree.push(black_box(0)));
+        }
+
+        #[bench]
+        fn bench_insert_with_cardinality(b: &mut Bencher) {
+            let file =
+                NamedTempFile::new().expect("there should be a tmp file");
+            let path = file.into_temp_path();
+
+            let mut tree = Tree::<usize, Cardinality>::new(path)
+                .expect("should open the tree successfully");
+
+            b.iter(|| tree.push(black_box(0)));
+        }
+    }
 }

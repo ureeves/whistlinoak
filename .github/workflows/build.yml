@@ -65,3 +65,32 @@ jobs:
         with:
           command: clippy
           args: -- -D warnings
+
+  bench:
+    name: Bench
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Install `nightly` toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+      - name: Run `cargo bench`
+        uses: actions-rs/cargo@v1
+        with:
+          command: bench
+          args: --features=test -- | tee output.txt
+      - name: Download previous benchmark data
+        uses: actions/cache@v1
+        with:
+          path: ./cache
+          key: ${{ runner.os }}-benchmark
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'cargo'
+          output-file-path: output.txt
+          external-data-json-path: ./cache/benchmark-data.json
+          fail-on-alert: true

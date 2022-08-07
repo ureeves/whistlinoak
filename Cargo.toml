@@ -21,3 +21,6 @@ tempfile = "3.3"
 rand = "0.8"
 blake2b_simd = "1"
 clap = { version = "3", features = ["derive"] }
+
+[features]
+test = []
