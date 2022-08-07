@@ -7,6 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind};
 use std::marker::PhantomData;
 use std::mem::{self, MaybeUninit};
+use std::ops::Index;
 use std::path::Path;
 use std::ptr;
 
@@ -311,6 +312,38 @@ where
     }
 }
 
+impl<L, A, const N: usize> Index<usize> for Tree<L, A, N>
+where
+    A: Annotation<L>,
+{
+    type Output = L;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        let (tree, header) = self.tree_buf_and_header();
+
+        if index >= header.filled {
+            panic!("index out of bounds");
+        }
+
+        let tree = tree.as_ptr();
+
+        let leaf_length = mem::size_of::<(L, A)>();
+        let leaf_offset_length = N * leaf_length + mem::size_of::<A>();
+
+        let leaf_index = index / N;
+        let inner_leaf_index = index % N;
+
+        unsafe {
+            let leaf = tree.add(
+                leaf_index * leaf_offset_length
+                    + inner_leaf_index * leaf_length,
+            ) as *const (L, A);
+
+            &(*leaf).0
+        }
+    }
+}
+
 struct TreeViewMut<'a, T, A, const N: usize> {
     tree: *mut u8,
     filled: usize,
@@ -547,6 +580,10 @@ mod tests {
         }
 
         assert_eq!(tree.len(), N_ELEMS as usize);
+
+        for i in 0..tree.len() {
+            assert_eq!(i, tree[i]);
+        }
     }
 
     fn insert_and_pop<const N: usize>() {
