@@ -1,3 +1,7 @@
+//! Pluggable memory backends for a [`Tree`].
+//!
+//! [`Tree`]: `crate::Tree`
+
 use std::convert::Infallible;
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -20,13 +24,14 @@ pub trait Memory {
     fn set_len(&mut self, size: usize) -> Result<(), Self::Error>;
 }
 
+/// A [`Memory`] implementation backed by a file using an mmap.
 pub struct FileMemory {
     file: File,
     mmap: MmapMut,
 }
 
 impl FileMemory {
-    pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub(crate) fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .read(true)

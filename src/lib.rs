@@ -3,7 +3,7 @@
 #![deny(clippy::all)]
 #![cfg_attr(feature = "test", feature(test))]
 
-mod backend;
+pub mod backend;
 
 use std::marker::PhantomData;
 use std::mem::{self, MaybeUninit};
@@ -53,10 +53,18 @@ struct Header {
 /// Leaves can also be [`pop`]ped from tree, and annotations will be kept
 /// updated.
 ///
+/// The [`Memory`] trait allows for different ways of storing the tree in
+/// memory. Currently, an implementation on `Vec<u8>` is provided through the
+/// [`new`] function, and on [`FileMemory`] through [`with_file`]. One can also
+/// use [`with_memory`] to supply their own implementation.
+///
 /// # Safety
 /// Using an `N` of 0 will result in a panic when trying to perform any
 /// operation.
 ///
+/// [`new`]: Tree::new
+/// [`with_file`]: Tree::with_file
+/// [`with_memory`]: Tree::with_memory
 /// [`push`]: Tree::push
 /// [`pop`]: Tree::pop
 /// [`root`]: Tree::root
@@ -110,7 +118,8 @@ where
     A: Annotation<L>,
     M: Memory,
 {
-    fn with_memory(memory: M) -> Result<Self, M::Error> {
+    /// Creates a new tree, backed by a custom implementation of [`Memory`].
+    pub fn with_memory(memory: M) -> Result<Self, M::Error> {
         let mut memory = memory;
         let unit_size = unit_tree_size::<L, A, N>();
 
