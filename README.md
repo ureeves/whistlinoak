@@ -4,7 +4,7 @@
 ![Build Status](https://github.com/ureeves/whistlinoak/workflows/build/badge.svg)
 [![Documentation](https://img.shields.io/badge/docs-whistlinoak-orange?logo=rust)](https://docs.rs/whistlinoak/)
 
-Annotated even-arity trees backed by mmaps.
+Annotated even-arity trees backed by arbitrary memories.
 
 ## Usage
 ```toml
@@ -13,11 +13,7 @@ whistlinoak = "0.1"
 
 ## Example
 ```rust 
-use tempfile::NamedTempFile;
 use whistlinoak::{Annotation, Tree};
-
-let file = NamedTempFile::new().unwrap();
-let path = file.into_temp_path();
 
 struct Cardinality(usize);
 
@@ -34,7 +30,7 @@ impl<T> Annotation<T> for Cardinality {
     }
 }
 
-let mut tree = Tree::<usize, Cardinality>::new(path).unwrap();
+let mut tree = Tree::<usize, Cardinality>::new();
 
 let n_leaves = 1000;
 

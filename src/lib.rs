@@ -3,15 +3,15 @@
 #![deny(clippy::all)]
 #![cfg_attr(feature = "test", feature(test))]
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, Error, ErrorKind};
+mod backend;
+
 use std::marker::PhantomData;
 use std::mem::{self, MaybeUninit};
 use std::ops::Index;
 use std::path::Path;
 use std::ptr;
 
-use memmap2::MmapMut;
+use backend::{FileMemory, Memory};
 
 /// Annotation over a leaf.
 pub trait Annotation<T> {
@@ -35,14 +35,15 @@ impl<T> Annotation<T> for () {
     }
 }
 
-/// Kept at the beginning of the mmap to speed up operations.
+/// Kept at the beginning of the memory to speed up operations.
 struct Header {
     filled: usize,
     cap: usize,
     levels: usize,
 }
 
-/// An annotated tree structure with an arity of `2N`, backed by an mmap.
+/// An annotated tree structure with an arity of `2N`, backed by an arbitrary
+/// memory.
 ///
 /// Each leaf contained in the tree is decorated by an [`Annotation`], computed
 /// on the [`push`] of said leaf. The change is then propagated up through the
@@ -59,15 +60,34 @@ struct Header {
 /// [`push`]: Tree::push
 /// [`pop`]: Tree::pop
 /// [`root`]: Tree::root
-pub struct Tree<L, A = (), const N: usize = 1> {
-    mmap: MmapMut,
-    file: File,
+pub struct Tree<L, A = (), const N: usize = 1, M: Memory = Vec<u8>> {
+    memory: M,
 
     marker_t: PhantomData<*const L>,
     marker_a: PhantomData<*const A>,
 }
 
-impl<L, A, const N: usize> Tree<L, A, N>
+impl<L, A, const N: usize> Tree<L, A, N, Vec<u8>>
+where
+    A: Annotation<L>,
+{
+    /// Creates a new tree, backed by a self-managed vector.
+    pub fn new() -> Self {
+        let memory = Vec::new();
+        Self::with_memory(memory).expect("infallible")
+    }
+}
+
+impl<L, A, const N: usize> Default for Tree<L, A, N, Vec<u8>>
+where
+    A: Annotation<L>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<L, A, const N: usize> Tree<L, A, N, FileMemory>
 where
     A: Annotation<L>,
 {
@@ -77,27 +97,34 @@ where
     /// When a file of length smaller than the tree header (three [`usize`]s)
     /// exists at the given path, it will be assumed to contain a valid tree. If
     /// not, a new file will be created.
-    pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(path)?;
-        let meta = file.metadata()?;
+    pub fn with_file<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<Self, <FileMemory as Memory>::Error> {
+        let memory = FileMemory::new(path)?;
+        Self::with_memory(memory)
+    }
+}
 
-        let unit_size = unit_tree_size::<L, A, N>() as u64;
+impl<L, A, const N: usize, M> Tree<L, A, N, M>
+where
+    A: Annotation<L>,
+    M: Memory,
+{
+    fn with_memory(memory: M) -> Result<Self, M::Error> {
+        let mut memory = memory;
+        let unit_size = unit_tree_size::<L, A, N>();
 
-        let file_len = meta.len();
-        let header_size = header_size() as u64;
+        let file_len = memory.memory().len();
+        let header_size = header_size();
 
         // if the file is smaller than metadata length, grow the file and
         // write an empty tree header.
         if file_len < header_size {
-            file.set_len(header_size + unit_size)?;
+            memory.set_len(header_size + unit_size)?;
             unsafe {
-                let mut mmap = MmapMut::map_mut(&file)?;
+                let mem = memory.memory_mut();
 
-                let header_ptr = mmap.as_mut_ptr();
+                let header_ptr = mem.as_mut_ptr();
                 let header_ptr = header_ptr as *mut Header;
 
                 ptr::write(
@@ -111,11 +138,8 @@ where
             };
         }
 
-        let mmap = unsafe { MmapMut::map_mut(&file)? };
-
         let mut tree = Self {
-            mmap,
-            file,
+            memory,
             marker_a: Default::default(),
             marker_t: Default::default(),
         };
@@ -125,14 +149,14 @@ where
         // if the tree is not the expected size error out since it is
         // undoubtedly corrupt
         if tree_buf.len() != tree_size::<L, A, N>(header.levels) {
-            return Err(Error::new(ErrorKind::InvalidData, "corrupt tree"));
+            panic!("corrupt tree");
         }
 
         Ok(tree)
     }
 
     /// Push a leaf to the tree.
-    pub fn push(&mut self, leaf: L) -> io::Result<()> {
+    pub fn push(&mut self, leaf: L) -> Result<(), M::Error> {
         let (_, header) = self.tree_buf_and_header();
 
         if header.filled == header.cap {
@@ -171,7 +195,7 @@ where
     }
 
     /// Pop the last leaf from the tree.
-    pub fn pop(&mut self) -> io::Result<Option<L>> {
+    pub fn pop(&mut self) -> Result<Option<L>, M::Error> {
         let (_, header) = self.tree_buf_and_header();
 
         if header.filled == 0 {
@@ -251,38 +275,32 @@ where
 
     /// Double the growth of the tree and reserve space in the middle for an
     /// annotation
-    fn grow_tree(&mut self) -> io::Result<()> {
+    fn grow_tree(&mut self) -> Result<(), M::Error> {
         let (_, header) = self.tree_buf_and_header();
 
         let len = header_size() + tree_size::<L, A, N>(header.levels + 1);
-        let len = len as u64;
 
-        self.file.set_len(len)?;
+        self.memory.set_len(len)?;
 
         let (_, header) = self.mut_tree_buf_and_header();
 
         header.cap *= arity(N);
         header.levels += 1;
 
-        self.mmap = unsafe { MmapMut::map_mut(&self.file)? };
-
         Ok(())
     }
 
-    fn shrink_tree(&mut self) -> io::Result<()> {
+    fn shrink_tree(&mut self) -> Result<(), M::Error> {
         let (_, header) = self.tree_buf_and_header();
 
         let len = header_size() + tree_size::<L, A, N>(header.levels - 1);
-        let len = len as u64;
 
-        self.file.set_len(len)?;
+        self.memory.set_len(len)?;
 
         let (_, header) = self.mut_tree_buf_and_header();
 
         header.cap /= arity(N);
         header.levels -= 1;
-
-        self.mmap = unsafe { MmapMut::map_mut(&self.file)? };
 
         Ok(())
     }
@@ -294,7 +312,7 @@ where
     }
 
     fn tree_buf_and_header(&self) -> (&[u8], &Header) {
-        let (header, tree) = self.mmap.split_at(header_size());
+        let (header, tree) = self.memory.memory().split_at(header_size());
 
         let ptr = header.as_ptr();
         let ptr = ptr as *const Header;
@@ -303,7 +321,8 @@ where
     }
 
     fn mut_tree_buf_and_header(&mut self) -> (&mut [u8], &mut Header) {
-        let (header, tree) = self.mmap.split_at_mut(header_size());
+        let (header, tree) =
+            self.memory.memory_mut().split_at_mut(header_size());
 
         let ptr = header.as_mut_ptr();
         let ptr = ptr as *mut Header;
@@ -312,7 +331,7 @@ where
     }
 }
 
-impl<L, A, const N: usize> Index<usize> for Tree<L, A, N>
+impl<L, A, const N: usize, M: Memory> Index<usize> for Tree<L, A, N, M>
 where
     A: Annotation<L>,
 {
@@ -527,7 +546,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{Annotation, Tree};
+    use crate::{Annotation, FileMemory, Tree};
 
     use tempfile::NamedTempFile;
 
@@ -549,11 +568,28 @@ mod tests {
     }
 
     fn cardinality<const N: usize>() {
+        let mut tree = Tree::<usize, Cardinality, N>::new();
+
+        for i in 0..N_ELEMS {
+            tree.push(i).expect("should push to the tree successfully");
+        }
+
+        assert_eq!(tree.len(), tree.root().0);
+
+        for _ in 0..N_ELEMS {
+            tree.pop().expect("should pop from the tree successfully");
+        }
+
+        assert_eq!(tree.len(), tree.root().0);
+    }
+
+    fn file_cardinality<const N: usize>() {
         let file = NamedTempFile::new().expect("there should be a tmp file");
         let path = file.into_temp_path();
 
-        let mut tree = Tree::<usize, Cardinality, N>::new(path)
-            .expect("should open the tree successfully");
+        let mut tree =
+            Tree::<usize, Cardinality, N, FileMemory>::with_file(path)
+                .expect("should open the tree successfully");
 
         for i in 0..N_ELEMS {
             tree.push(i).expect("should push to the tree successfully");
@@ -569,10 +605,24 @@ mod tests {
     }
 
     fn insert<const N: usize>() {
+        let mut tree = Tree::<usize, (), N>::new();
+
+        for i in 0..N_ELEMS {
+            tree.push(i).expect("push should succeed");
+        }
+
+        assert_eq!(tree.len(), N_ELEMS as usize);
+
+        for i in 0..tree.len() {
+            assert_eq!(i, tree[i]);
+        }
+    }
+
+    fn file_insert<const N: usize>() {
         let file = NamedTempFile::new().expect("there should be a tmp file");
         let path = file.into_temp_path();
 
-        let mut tree = Tree::<usize, (), N>::new(path)
+        let mut tree = Tree::<usize, (), N, FileMemory>::with_file(path)
             .expect("creating a tree should go ok");
 
         for i in 0..N_ELEMS {
@@ -590,8 +640,26 @@ mod tests {
         let file = NamedTempFile::new().expect("there should be a tmp file");
         let path = file.into_temp_path();
 
-        let mut tree = Tree::<usize, (), N>::new(path)
+        let mut tree = Tree::<usize, (), N, FileMemory>::with_file(path)
             .expect("creating a tree should go ok");
+
+        for i in 0..N_ELEMS {
+            tree.push(i).expect("push should succeed");
+        }
+
+        for i in (0..N_ELEMS).rev() {
+            assert_eq!(
+                i,
+                tree.pop()
+                    .expect("pop should succeed")
+                    .expect("pop should yield a leaf")
+            );
+        }
+        assert!(tree.is_empty());
+    }
+
+    fn file_insert_and_pop<const N: usize>() {
+        let mut tree = Tree::<usize, (), N>::new();
 
         for i in 0..N_ELEMS {
             tree.push(i).expect("push should succeed");
@@ -618,6 +686,13 @@ mod tests {
             }
 
             #[test]
+            fn file_inserts_and_pops() {
+                $(
+                    file_insert_and_pop::<$n>();
+                )*
+            }
+
+            #[test]
             fn inserts() {
                 $(
                     insert::<$n>();
@@ -625,9 +700,23 @@ mod tests {
             }
 
             #[test]
+            fn file_inserts() {
+                $(
+                    file_insert::<$n>();
+                )*
+            }
+
+            #[test]
             fn cardinalities() {
                 $(
                     cardinality::<$n>();
+                )*
+            }
+
+            #[test]
+            fn file_cardinalities() {
+                $(
+                    file_cardinality::<$n>();
                 )*
             }
         };
@@ -640,32 +729,45 @@ mod tests {
         extern crate test;
 
         use crate::tests::Cardinality;
+        use crate::{FileMemory, Tree};
 
-        use crate::Tree;
         use tempfile::NamedTempFile;
         use test::{black_box, Bencher};
 
         #[bench]
-        fn bench_insert(b: &mut Bencher) {
+        fn bench_file_insert(b: &mut Bencher) {
             let file =
                 NamedTempFile::new().expect("there should be a tmp file");
             let path = file.into_temp_path();
 
-            let mut tree = Tree::<usize>::new(path)
+            let mut tree = Tree::<usize, (), 1, FileMemory>::with_file(path)
                 .expect("should open the tree successfully");
 
             b.iter(|| tree.push(black_box(0)));
         }
 
         #[bench]
-        fn bench_insert_with_cardinality(b: &mut Bencher) {
+        fn bench_file_insert_with_cardinality(b: &mut Bencher) {
             let file =
                 NamedTempFile::new().expect("there should be a tmp file");
             let path = file.into_temp_path();
 
-            let mut tree = Tree::<usize, Cardinality>::new(path)
-                .expect("should open the tree successfully");
+            let mut tree =
+                Tree::<usize, Cardinality, 1, FileMemory>::with_file(path)
+                    .expect("should open the tree successfully");
 
+            b.iter(|| tree.push(black_box(0)));
+        }
+
+        #[bench]
+        fn bench_insert(b: &mut Bencher) {
+            let mut tree = Tree::<usize>::new();
+            b.iter(|| tree.push(black_box(0)));
+        }
+
+        #[bench]
+        fn bench_insert_with_cardinality(b: &mut Bencher) {
+            let mut tree = Tree::<usize, Cardinality>::new();
             b.iter(|| tree.push(black_box(0)));
         }
     }

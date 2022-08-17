@@ -1,7 +1,4 @@
 use blake2b_simd::{Hash as Blake2bHash, Params, State};
-use clap::Parser;
-use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
 use whistlinoak::{Annotation, Tree};
 
 // the hash of a leaf
@@ -32,25 +29,8 @@ impl Annotation<u16> for Hash {
     }
 }
 
-#[derive(Parser)]
-struct Args {
-    file: Option<PathBuf>,
-}
-
 fn main() {
-    let args = Args::parse();
-
-    let path: Box<dyn AsRef<Path>> = match args.file {
-        Some(path) => Box::new(path),
-        None => {
-            let file = NamedTempFile::new()
-                .expect("creating a temp file shouldn't fail");
-            Box::new(file.into_temp_path())
-        }
-    };
-
-    let mut tree = Tree::<u16, Hash>::new(path.as_ref())
-        .expect("creating new tree to be successful");
+    let mut tree = Tree::<u16, Hash>::new();
 
     let mut state = hash_state();
 
