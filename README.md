@@ -8,7 +8,7 @@ Annotated even-arity trees backed by arbitrary memories.
 
 ## Usage
 ```toml
-whistlinoak = "0.1"
+whistlinoak = "0.2"
 ```
 
 ## Example
