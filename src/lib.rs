@@ -550,7 +550,7 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    const N_ELEMS: usize = 2048;
+    const N_ELEMS: usize = 16384;
 
     struct Cardinality(usize);
 
