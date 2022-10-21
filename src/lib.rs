@@ -620,7 +620,7 @@ mod tests {
             tree.push(i).expect("push should succeed");
         }
 
-        assert_eq!(tree.len(), N_ELEMS as usize);
+        assert_eq!(tree.len(), N_ELEMS);
 
         for i in 0..tree.len() {
             assert_eq!(i, tree[i]);
@@ -638,7 +638,7 @@ mod tests {
             tree.push(i).expect("push should succeed");
         }
 
-        assert_eq!(tree.len(), N_ELEMS as usize);
+        assert_eq!(tree.len(), N_ELEMS);
 
         for i in 0..tree.len() {
             assert_eq!(i, tree[i]);
